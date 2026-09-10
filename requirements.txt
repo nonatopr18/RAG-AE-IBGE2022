@@ -16,4 +16,4 @@ chromadb
 sentence-transformers
 huggingface-hub
 python-dotenv
-
+langchain-ollama
