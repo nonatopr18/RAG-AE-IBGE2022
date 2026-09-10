@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 """
 FRONTEND STREAMLIT PARA RAG LOCAL COM BANCO DOCLING
 
@@ -8,10 +6,11 @@ Fluxo:
 2. A pergunta é transformada em embedding.
 3. O Chroma consulta os chunks estruturados pelo Docling.
 4. Os trechos são enviados ao modelo local do Ollama.
-5. O modelo responde somente com base nos documentos.
+5. Os trechos são enviados ao Gemini.
+6. O modelo responde somente com base nos documentos.
 
 Não utiliza a API da OpenAI.
-Não precisa de OPENAI_API_KEY.
+Usa GOOGLE_API_KEY armazenada nos Secrets do Streamlit Cloud.
 """
 
 from pathlib import Path
@@ -21,7 +20,7 @@ import streamlit as st
 
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_ollama import ChatOllama
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
@@ -42,10 +41,8 @@ MODELO_EMBEDDING = (
     "paraphrase-multilingual-MiniLM-L12-v2"
 )
 
-# O Qwen 7B entende melhor português e documentos do que modelos 3B.
-MODELO_OLLAMA = "qwen2.5:7b"
-
-ENDERECO_OLLAMA = "http://localhost:11434"
+# Modelo Gemini usado na nuvem pelo Streamlit Cloud.
+MODELO_GEMINI = "gemini-2.5-flash"
 
 QUANTIDADE_PADRAO_DOCUMENTOS = 14
 
@@ -183,24 +180,34 @@ def carregar_banco_vetorial():
 
 
 # ==========================================================
-# CARREGAR O OLLAMA
+# CARREGAR O GEMINI
 # ==========================================================
 
 @st.cache_resource(
-    show_spinner="Conectando ao modelo local..."
+    show_spinner="Conectando ao Gemini..."
 )
 def carregar_modelo():
     """
-    Cria a conexão com o modelo local executado pelo Ollama.
+    Cria a conexão com o modelo Gemini usando a chave armazenada
+    nos Secrets do Streamlit Cloud.
     """
 
-    modelo = ChatOllama(
-        model=MODELO_OLLAMA,
-        base_url=ENDERECO_OLLAMA,
+    try:
+        chave_google = st.secrets["GOOGLE_API_KEY"]
+    except Exception:
+        chave_google = None
+
+    if not chave_google:
+        raise RuntimeError(
+            "A chave GOOGLE_API_KEY não foi configurada nos Secrets "
+            "do Streamlit Cloud."
+        )
+
+    modelo = ChatGoogleGenerativeAI(
+        model=MODELO_GEMINI,
+        google_api_key=chave_google,
         temperature=0,
-        # Mantém a resposta curta, mas evita cortar o raciocínio cedo demais.
-        num_predict=250,
-        num_ctx=8192
+        max_output_tokens=250
     )
 
     return modelo
@@ -503,41 +510,30 @@ def gerar_resposta(
     return resposta, documentos
 
 
-def mensagem_erro_ollama(erro):
+def mensagem_erro_gemini(erro):
     """
-    Converte erros técnicos do Ollama em orientações.
+    Converte erros técnicos do Gemini em orientações.
     """
 
     texto_erro = str(erro).lower()
 
-    erros_conexao = [
-        "connection refused",
-        "failed to establish",
-        "connection error",
-        "connecterror",
-        "max retries exceeded",
-        "winerror 10061"
-    ]
-
-    if any(item in texto_erro for item in erros_conexao):
-        return (
-            "Não foi possível conectar ao Ollama. "
-            "Confirme se o Ollama está instalado e aberto. "
-            "Depois execute no PowerShell: "
-            f"`ollama run {MODELO_OLLAMA}`"
-        )
-
     if (
-        "model" in texto_erro
-        and (
-            "not found" in texto_erro
-            or "pull" in texto_erro
-        )
+        "api key" in texto_erro
+        or "api_key" in texto_erro
+        or "authentication" in texto_erro
+        or "unauthenticated" in texto_erro
+        or "permission" in texto_erro
     ):
         return (
-            f"O modelo `{MODELO_OLLAMA}` não está instalado. "
-            "Execute no PowerShell: "
-            f"`ollama pull {MODELO_OLLAMA}`"
+            "Não foi possível autenticar no Gemini. "
+            "Verifique se o Secret `GOOGLE_API_KEY` está configurado "
+            "corretamente no Streamlit Cloud."
+        )
+
+    if "quota" in texto_erro or "resource exhausted" in texto_erro:
+        return (
+            "O limite de uso da API do Gemini foi atingido. "
+            "Verifique a cota e o faturamento da chave usada."
         )
 
     return f"Não foi possível gerar a resposta: {erro}"
@@ -586,15 +582,15 @@ with st.sidebar:
 
     st.divider()
 
-    st.subheader("🤖 Modelo local")
+    st.subheader("🤖 Modelo de IA")
 
-    st.write(f"**Modelo:** `{MODELO_OLLAMA}`")
+    st.write(f"**Modelo:** `{MODELO_GEMINI}`")
     st.write("**Banco:** `db_doclin` (processado com Docling)")
     st.write(
         f"**Resposta:** até {LIMITE_PALAVRAS_RESPOSTA} palavras"
     )
-    st.write("**Servidor:** Ollama")
-    st.write("**Cobrança por pergunta:** nenhuma")
+    st.write("**Servidor:** Google Gemini")
+    st.write("**API:** Google Gemini")
 
     st.divider()
 
@@ -619,7 +615,7 @@ try:
         <div class="status-ok">
             ✅ Sistema carregado.
             O banco possui <strong>{total_registros}</strong>
-            trechos e o modelo será executado localmente.
+            trechos e o modelo será executado na nuvem pelo Gemini.
         </div>
         """,
         unsafe_allow_html=True
@@ -712,7 +708,7 @@ if pergunta:
                     )
 
                 except Exception as erro:
-                    mensagem = mensagem_erro_ollama(erro)
+                    mensagem = mensagem_erro_gemini(erro)
 
                     st.error(mensagem)
 
