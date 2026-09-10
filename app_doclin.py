@@ -42,7 +42,7 @@ MODELO_EMBEDDING = (
 )
 
 # Modelo Gemini usado na nuvem pelo Streamlit Cloud.
-MODELO_GEMINI = "gemini-2.5-flash"
+MODELO_GEMINI = "gemini-3.6-flash"
 
 QUANTIDADE_PADRAO_DOCUMENTOS = 14
 
